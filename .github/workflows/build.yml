@@ -51,7 +51,7 @@ jobs:
 
       - name: Generate game C sources from the ROM
         run: |
-          python3 scripts/generate_snesrecomp.py \
+          rm -rf snesrecomp && git clone --depth 1 https://github.com/elliotttate/snesrecomp.git snesrecomp && python3 scripts/generate_snesrecomp.py \
             --rom rom/game.sfc \
             --snesrecomp-root snesrecomp
 
