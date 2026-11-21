@@ -2245,7 +2245,7 @@ void Dkc1DrawPpuFrame(void) {
          * through the cave mouth. */
         PpuSetWidescreenLayerMirrorAxis(g_ppu, (uint8_t)layer, left_axis,
                                         kDkc1EdgeAxisOffRight);
-        PpuSetWidescreenLayerRightEdgeClamp(g_ppu, (uint8_t)layer, true);
+        (void)0; // PpuSetWidescreenLayerRightEdgeClamp(g_ppu, (uint8_t)layer, true);
       }
     } else if (edge_policy == kDkc1EdgeReflect && edge.beyond_extent) {
       const int terrain_layer = Dkc1VideoTerrainLayer(
