@@ -1,6 +1,5 @@
 name: Build Android APK (debug)
 
-# Manual trigger only: Actions tab > Build Android APK > Run workflow.
 on:
   workflow_dispatch:
 
@@ -16,7 +15,7 @@ jobs:
       - name: Check the ROM is in the repository
         run: |
           if [ ! -f rom/game.sfc ]; then
-            echo "Falta o arquivo rom/game.sfc no repositorio (ROM USA 1.0 de DKC1)."
+            echo "Falta o arquivo rom/game.sfc no repositorio"
             exit 1
           fi
 
@@ -29,31 +28,31 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - run: echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+      - name: Setup Android SDK path
+        run: echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
 
       - name: Install SDK, NDK and CMake
         run: |
           yes | sdkmanager --licenses > /dev/null
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" \
-            "ndk;26.1.10909125" "cmake;3.22.1"
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125" "cmake;3.22.1"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.7"
 
-      - name: Fetch SDL2 (C sources and its Java glue)
+      - name: Fetch SDL2
         run: |
-          git clone --depth 1 --branch release-2.30.9 \
-            https://github.com/libsdl-org/SDL.git android/SDL
+          git clone --depth 1 --branch release-2.30.9 https://github.com/libsdl-org/SDL.git android/SDL
           mkdir -p android/app/src/main/java/org/libsdl/app
-          cp android/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
-            android/app/src/main/java/org/libsdl/app/
+          cp android/SDL/android-project/app/src/main/java/org/libsdl/app/*.java android/app/src/main/java/org/libsdl/app/
 
       - name: Generate game C sources from the ROM
         run: |
-        run: rm -rf /tmp/dkc_sub snesrecomp && git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/elliotttate/DKC1Recomp.git /tmp/dkc_sub && mv /tmp/dkc_sub/snesrecomp ./snesrecomp && rm -rf /tmp/dkc_sub && python3 scripts/generate_snesrecomp.py \
-            --rom rom/game.sfc \
-            --snesrecomp-root snesrecomp
+          rm -rf /tmp/dkc_sub snesrecomp
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/elliotttate/DKC1Recomp.git /tmp/dkc_sub
+          mv /tmp/dkc_sub/snesrecomp ./snesrecomp
+          rm -rf /tmp/dkc_sub
+          python3 scripts/generate_snesrecomp.py --rom rom/game.sfc --snesrecomp-root snesrecomp
 
       - name: Build the APK
         working-directory: android
