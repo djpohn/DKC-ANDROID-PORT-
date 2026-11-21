@@ -51,7 +51,7 @@ jobs:
 
       - name: Generate game C sources from the ROM
         run: |
-          rm -rf snesrecomp && git clone --depth 1 https://github.com/elliotttate/snesrecomp.git snesrecomp && python3 scripts/generate_snesrecomp.py \
+        run: rm -rf /tmp/dkc_sub snesrecomp && git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/elliotttate/DKC1Recomp.git /tmp/dkc_sub && mv /tmp/dkc_sub/snesrecomp ./snesrecomp && rm -rf /tmp/dkc_sub && python3 scripts/generate_snesrecomp.py \
             --rom rom/game.sfc \
             --snesrecomp-root snesrecomp
 
