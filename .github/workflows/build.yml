@@ -1,0 +1,65 @@
+name: Build Android APK (debug)
+
+# Manual trigger only: Actions tab > Build Android APK > Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check the ROM is in the repository
+        run: |
+          if [ ! -f rom/game.sfc ]; then
+            echo "Falta o arquivo rom/game.sfc no repositorio (ROM USA 1.0 de DKC1)."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" \
+            "ndk;26.1.10909125" "cmake;3.22.1"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Fetch SDL2 (C sources and its Java glue)
+        run: |
+          git clone --depth 1 --branch release-2.30.9 \
+            https://github.com/libsdl-org/SDL.git android/SDL
+          mkdir -p android/app/src/main/java/org/libsdl/app
+          cp android/SDL/android-project/app/src/main/java/org/libsdl/app/*.java \
+            android/app/src/main/java/org/libsdl/app/
+
+      - name: Generate game C sources from the ROM
+        run: |
+          python3 scripts/generate_snesrecomp.py \
+            --rom rom/game.sfc \
+            --snesrecomp-root snesrecomp
+
+      - name: Build the APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dkc1-android-apk
+          path: android/app/build/outputs/apk/debug/*.apk
