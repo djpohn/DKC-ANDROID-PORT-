@@ -29,6 +29,9 @@ add_library(main SHARED
     ${DKC1_SNESRECOMP_GEN_SOURCES}
     ${DKC1_RUNNER_SOURCES}
     runner/headless_host.c
+    runner/dkc1_hd_sprites.c
+    runner/dkc1_game.c
+    runner/dkc1_framegen.c
     runner/desktop_graphics.c
     runner/desktop_crt.c
     runner/ios/ios_audio_ring.c
