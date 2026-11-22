@@ -12,7 +12,7 @@ android {
         minSdk 21
         targetSdk 34
         versionCode 1
-        versionName '0.0.14-android'
+        versionName 'V1.0'
 
         ndk {
             // 64-bit ARM only (all current phones). Keeps the build short.
@@ -40,6 +40,13 @@ android {
             // Signed with the debug key so the APK installs directly.
             // Fine for personal use; not for distribution.
             signingConfig signingConfigs.debug
+        }
+    }
+
+    // APK name: dkc1recomp-V1.0-debug.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            output.outputFileName = "dkc1recomp-${defaultConfig.versionName}-${variant.buildType.name}.apk"
         }
     }
 

@@ -15,6 +15,9 @@
 #include <SDL.h>
 #include <SDL_main.h>   /* renames main() to SDL_main() on Android */
 #include <SDL_system.h> /* SDL_AndroidGetInternalStoragePath */
+#if defined(__ANDROID__)
+#include <jni.h>
+#endif
 
 #include <math.h>
 #include <stdbool.h>
@@ -58,13 +61,14 @@ enum {
 /* UI actions: one bit each in a 64-bit mask, separate from the joypad bits. */
 enum {
   A_TAB_GFX, A_TAB_PERF, A_TAB_PLAY, A_TAB_SAVE, A_TAB_SYS, /* 0..4 */
-  A_CLOSE, A_CONFIG,                                         /* 5, 6 */
+  A_CLOSE, A_CONFIG,
   A_FILTER, A_ASPECT, A_BRIGHT_DN, A_BRIGHT_UP,              /* 7..10 */
   A_FPS_DN, A_FPS_UP, A_VSYNC, A_SHOWFPS,                    /* 11..14 */
   A_SPEED_DN, A_SPEED_UP, A_BUTTONS, A_SIZE_DN, A_SIZE_UP,   /* 15..19 */
   A_PAGE_PREV, A_PAGE_NEXT,                                  /* 20, 21 */
-  A_RESET, A_UPDATES,                                        /* 22, 23 */
-  A_SLOT0 /* 24..53: slot k uses A_SLOT0 + 3k + op (0 save, 1 load, 2 delete) */
+  A_RESET, A_UPDATES,
+  A_HOME, /* leaves the game and returns to the home screen */
+  A_SLOT0 /* slot k uses A_SLOT0 + 3k + op (0 save, 1 load, 2 delete); ends at bit 63 */
 };
 #define ACT(a) (1ull << (a))
 
@@ -95,7 +99,7 @@ typedef struct Settings {
   int filter;        /* 0 = original (sharp pixels), 1 = smooth */
   int aspect;        /* 0 = original proportion, 1 = adapted (fill screen) */
   int brightness;    /* 0..100 */
-  int fps_limit;     /* 10..60 frames per second */
+  int fps_limit;     /* 10..120 frames per second */
   int vsync;         /* 1 = V-Sync (applies on next launch) */
   int show_fps;      /* 1 = draw frame counter */
   int speed;         /* 0..200 percent of normal game speed */
@@ -148,7 +152,7 @@ static void LoadSettings(void) {
     if (KeyValue(line, "filter", &v)) s_settings.filter = Clamp(v, 0, 1);
     else if (KeyValue(line, "aspect", &v)) s_settings.aspect = Clamp(v, 0, 1);
     else if (KeyValue(line, "brightness", &v)) s_settings.brightness = Clamp(v, 0, 100);
-    else if (KeyValue(line, "fps_limit", &v)) s_settings.fps_limit = Clamp(v, 10, 60);
+    else if (KeyValue(line, "fps_limit", &v)) s_settings.fps_limit = Clamp(v, 10, 120);
     else if (KeyValue(line, "vsync", &v)) s_settings.vsync = Clamp(v, 0, 1);
     else if (KeyValue(line, "show_fps", &v)) s_settings.show_fps = Clamp(v, 0, 1);
     else if (KeyValue(line, "speed", &v)) s_settings.speed = Clamp(v, 0, 200);
@@ -359,6 +363,7 @@ static void MakeLayout(Layout *l, float w, float h) {
   const float sw = fmaxf(bh * 1.8f, 0.16f * h);
   l->left = (Box){m, m, sw, bh, PAD_L, 0, "L"};
   l->right = (Box){l->gear.cx - gr - gap - sw, m, sw, bh, PAD_R, 0, "R"};
+
 }
 
 static bool InBox(const Box *box, float x, float y) {
@@ -404,9 +409,11 @@ static void HitMenu(float x, float y, Touch *t) {
   }
 }
 
+
 /* Pad bits and action bits for every finger currently on screen. */
 static Touch ReadTouch(const Layout *l, int w, int h) {
   Touch t = {0, 0};
+  int dedos = 0;
   const int devices = SDL_GetNumTouchDevices();
   for (int d = 0; d < devices; ++d) {
     const SDL_TouchID id = SDL_GetTouchDevice(d);
@@ -414,10 +421,17 @@ static Touch ReadTouch(const Layout *l, int w, int h) {
     for (int i = 0; i < fingers; ++i) {
       const SDL_Finger *finger = SDL_GetTouchFinger(id, i);
       if (!finger) continue;
+      ++dedos;
       const float x = finger->x * w, y = finger->y * h;
       if (s_menu_open) HitMenu(x, y, &t);
       else HitGame(l, x, y, &t);
     }
+  }
+  /* Mouse: the left button works like a finger at the cursor. */
+  int mx = 0, my = 0;
+  if (dedos == 0 && (SDL_GetMouseState(&mx, &my) & SDL_BUTTON(SDL_BUTTON_LEFT))) {
+    if (s_menu_open) HitMenu((float)mx, (float)my, &t);
+    else HitGame(l, (float)mx, (float)my, &t);
   }
   return t;
 }
@@ -425,6 +439,26 @@ static Touch ReadTouch(const Layout *l, int w, int h) {
 /* ------------------------------------------------------------------------ */
 /* Game controllers                                                          */
 /* ------------------------------------------------------------------------ */
+
+/* Keyboard (player 1). Same layout as the on-screen buttons: Z = bottom (jump),
+ * X = left (roll), S = top (swap), A = right (free). */
+static uint32_t KeyboardPad(void) {
+  const Uint8 *k = SDL_GetKeyboardState(NULL);
+  uint32_t m = 0;
+  if (k[SDL_SCANCODE_LEFT]) m |= PAD_LEFT;
+  if (k[SDL_SCANCODE_RIGHT]) m |= PAD_RIGHT;
+  if (k[SDL_SCANCODE_UP]) m |= PAD_UP;
+  if (k[SDL_SCANCODE_DOWN]) m |= PAD_DOWN;
+  if (k[SDL_SCANCODE_Z]) m |= PAD_B;
+  if (k[SDL_SCANCODE_X]) m |= PAD_Y;
+  if (k[SDL_SCANCODE_S]) m |= PAD_A;
+  if (k[SDL_SCANCODE_A]) m |= PAD_X;
+  if (k[SDL_SCANCODE_Q]) m |= PAD_L;
+  if (k[SDL_SCANCODE_W]) m |= PAD_R;
+  if (k[SDL_SCANCODE_RETURN]) m |= PAD_START;
+  if (k[SDL_SCANCODE_RSHIFT]) m |= PAD_SELECT;
+  return m;
+}
 
 static uint32_t ReadPad(SDL_GameController *pad) {
   if (!pad) return 0;
@@ -652,6 +686,24 @@ static void ApplyFilter(void) {
                             s_settings.filter ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
 }
 
+/* Saves, then finishes the game Activity so the home screen comes back on top.
+ * Pushing SDL_QUIT alone only ends the loop; the Activity stays open. */
+static void GoToHome(void) {
+  FlushSave(true);
+#if defined(__ANDROID__)
+  JNIEnv *env = (JNIEnv *)SDL_AndroidGetJNIEnv();
+  jobject activity = (jobject)SDL_AndroidGetActivity();
+  if (env && activity) {
+    jclass cls = (*env)->GetObjectClass(env, activity);
+    jmethodID go_home = (*env)->GetMethodID(env, cls, "goHome", "()V");
+    if (go_home) (*env)->CallVoidMethod(env, activity, go_home);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    (*env)->DeleteLocalRef(env, cls);
+    (*env)->DeleteLocalRef(env, activity);
+  }
+#endif
+}
+
 /* Runs one menu action. `pending` is the action that was tapped once before:
  * destructive buttons only act on a second tap of the same button. */
 static void DoAction(int a) {
@@ -673,6 +725,9 @@ static void DoAction(int a) {
   }
   switch (a) {
     case A_CLOSE: s_menu_open = 0; return;
+    case A_HOME:
+      GoToHome();
+      return;
     case A_CONFIG: s_menu_open = 1; return;
     case A_FILTER:
       s_settings.filter = !s_settings.filter;
@@ -681,8 +736,8 @@ static void DoAction(int a) {
     case A_ASPECT: s_settings.aspect = !s_settings.aspect; break;
     case A_BRIGHT_DN: s_settings.brightness = Step(s_settings.brightness, -10, 0, 100); break;
     case A_BRIGHT_UP: s_settings.brightness = Step(s_settings.brightness, 10, 0, 100); break;
-    case A_FPS_DN: s_settings.fps_limit = Step(s_settings.fps_limit, -5, 10, 60); break;
-    case A_FPS_UP: s_settings.fps_limit = Step(s_settings.fps_limit, 5, 10, 60); break;
+    case A_FPS_DN: s_settings.fps_limit = Step(s_settings.fps_limit, -10, 10, 120); break;
+    case A_FPS_UP: s_settings.fps_limit = Step(s_settings.fps_limit, 10, 10, 120); break;
     case A_VSYNC: s_settings.vsync = !s_settings.vsync; break;
     case A_SHOWFPS: s_settings.show_fps = !s_settings.show_fps; break;
     case A_SPEED_DN: s_settings.speed = Step(s_settings.speed, -10, 0, 200); break;
@@ -975,6 +1030,7 @@ static void BuildMenu(float w, float h) {
   if (SDL_GetTicks() < s_notice_until && s_notice[0])
     AddText(s_notice, px0 + pw * 0.5f, title_cy, FitPx(s_notice, pw * 0.5f, max_px), true, true);
   AddBtn(px0 + pw * 0.02f, footer_y, pw * 0.18f, bh, A_CLOSE, "FECHAR", false, true);
+  AddBtn(px0 + pw * 0.22f, footer_y, pw * 0.26f, bh, A_HOME, "MENU INICIAL", false, true);
 
   /* Row helpers. */
   #define ROW_CY(i) (rows_top + rh * ((i) + 0.5f))
@@ -1039,13 +1095,13 @@ static void BuildMenu(float w, float h) {
              s_confirm == id_save + 2, occupied);
     }
     /* Page navigation in the footer. */
-    const float prev_x = px0 + pw * 0.40f, next_x = prev_x + bh * 1.6f + pw * 0.12f;
+    const float prev_x = px0 + pw * 0.56f, next_x = prev_x + bh * 1.6f + pw * 0.12f;
     AddBtn(prev_x, footer_y, bh * 1.6f, bh, A_PAGE_PREV, "ANT", false, s_page > 0);
     AddBtn(next_x, footer_y, bh * 1.6f, bh, A_PAGE_NEXT, "PROX", false, s_page < 1);
     snprintf(buf, sizeof buf, "PAGINA %d/2", s_page + 1);
     AddText(buf, prev_x + bh * 1.6f + pw * 0.06f, footer_y + bh * 0.5f,
             FitPx(buf, pw * 0.1f, max_px), true, false);
-  } else {
+  } else if (s_tab == A_TAB_SYS) {
     ROW_LABEL("RESTAURAR", 0);
     AddBtn(ctl_x, ROW_CY(0) - cb * 0.5f, pw * 0.30f, cb, A_RESET,
            s_confirm == A_RESET ? "CONFIRMAR" : "PADROES", s_confirm == A_RESET, true);
@@ -1054,6 +1110,19 @@ static void BuildMenu(float w, float h) {
     AddText(VERSION_TEXT, lab_x, ROW_CY(2), FitPx(VERSION_TEXT, pw * 0.44f, max_px), false, false);
     AddText("CREDITOS " CREDIT_TEXT, lab_x, ROW_CY(3),
             FitPx("CREDITOS " CREDIT_TEXT, pw * 0.44f, max_px), false, false);
+    /* Graphics API the renderer actually uses (for example OPENGLES2). */
+    SDL_RendererInfo info;
+    char api[48] = "API GRAFICA ?";
+    if (s_renderer && SDL_GetRendererInfo(s_renderer, &info) == 0) {
+      size_t n = 0;
+      for (; info.name[n] && n < 24; ++n) {
+        char c = info.name[n];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        api[n + 12] = c;
+      }
+      snprintf(api, sizeof api, "API GRAFICA %.*s", (int)n, api + 12);
+    }
+    AddText(api, lab_x, ROW_CY(4), FitPx(api, pw * 0.44f, max_px), false, false);
   }
   #undef ROW_CY
   #undef ROW_LABEL
@@ -1273,7 +1342,7 @@ int main(int argc, char *argv[]) {
     /* Joypad input: touch and gamepads, but nothing while the panel is open. */
     uint32_t input = 0;
     if (!s_menu_open) {
-      input = touch.pad;
+      input = touch.pad | KeyboardPad();
       for (int i = 0; i < 2; ++i) input |= ReadPad(s_pads[i]) << (i * 12);
     }
 
