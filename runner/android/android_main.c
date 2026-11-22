@@ -339,10 +339,12 @@ static void MakeLayout(Layout *l, float w, float h) {
   if (s < fr * 1.5f) s = fr * 1.5f;
   const float fcx = w - m - s - fr;
   const float fcy = h - m - s - fr;
-  l->face[0] = (Circle){fcx, fcy - s, fr, PAD_Y, 0, 'Y'};
-  l->face[1] = (Circle){fcx - s, fcy, fr, PAD_X, 0, 'X'};
-  l->face[2] = (Circle){fcx + s, fcy, fr, PAD_B, 0, 'B'};
-  l->face[3] = (Circle){fcx, fcy + s, fr, PAD_A, 0, 'A'};
+  /* Letters are what the buttons show. Game actions (from docs/IOS.md):
+   * B = jump, Y = roll/run, A = swap Kong. X on the right is unused for now. */
+  l->face[0] = (Circle){fcx, fcy - s, fr, PAD_A, 0, 'Y'};  /* top: swap */
+  l->face[1] = (Circle){fcx - s, fcy, fr, PAD_Y, 0, 'X'};  /* left: roll */
+  l->face[2] = (Circle){fcx + s, fcy, fr, PAD_X, 0, 'B'};  /* right: free */
+  l->face[3] = (Circle){fcx, fcy + s, fr, PAD_B, 0, 'A'};  /* bottom: jump */
 
   float gr = 0.06f * h * k;
   if (gr < min_r) gr = min_r;
@@ -540,9 +542,9 @@ static int SDLCALL LifecycleWatch(void *user, SDL_Event *event) {
   return 1;
 }
 
-/* Slot k (0..9) is a copy of the cartridge save memory, kept in saves/slots. */
+/* Slot k (0..9) is a full save state (RtlSaveSnapshot), kept in saves/slots. */
 static void SlotPath(int k, char *out, size_t n) {
-  snprintf(out, n, "%s/slot%02d.srm", s_slot_dir, k + 1);
+  snprintf(out, n, "%s/slot%02d.state", s_slot_dir, k + 1);
 }
 
 static bool SlotInfo(int k, time_t *mtime) {
@@ -560,21 +562,16 @@ static void SlotSave(int k) {
   SlotPath(k, path, sizeof path);
   snprintf(tmp, sizeof tmp, "%s.tmp", path);
   SDL_LockMutex(s_game_lock);
-  bool ok = false;
-  FILE *file = fopen(tmp, "wb");
-  if (file) {
-    const size_t n = (size_t)g_sram_size;
-    ok = fwrite(g_sram, 1, n, file) == n;
-    ok = (fclose(file) == 0) && ok;
-    if (ok) ok = rename(tmp, path) == 0;
-    if (!ok) remove(tmp);
-  }
+  bool ok = RtlSaveSnapshot(tmp) != 0;
+  if (ok) ok = rename(tmp, path) == 0;
+  if (!ok) remove(tmp);
   SDL_UnlockMutex(s_game_lock);
   char message[64];
   snprintf(message, sizeof message, ok ? "SLOT %d SALVO" : "ERRO AO SALVAR O SLOT", k + 1);
   Notify(message);
 }
 
+/* Restores the saved state right away, without restarting the app. */
 static void SlotLoad(int k) {
   if (!s_loaded) return;
   char path[1200];
@@ -584,22 +581,18 @@ static void SlotLoad(int k) {
     Notify("ESSE SLOT ESTA VAZIO");
     return;
   }
-  const size_t n = (size_t)g_sram_size;
-  if ((size_t)st.st_size != n) {
-    Notify("SLOT INCOMPATIVEL COM ESTA ROM");
-    return;
-  }
   SDL_LockMutex(s_game_lock);
-  size_t got = 0;
-  FILE *file = fopen(path, "rb");
-  if (file) {
-    got = fread(g_sram, 1, n, file);
-    fclose(file);
+  const bool ok = RtlLoadSnapshot(path) != 0;
+  if (ok) {
+    Dkc1BeginDrawing(s_pixels, (size_t)s_render_width * 4);
+    FlushSave(true);
   }
-  if (got == n) FlushSave(true);
   SDL_UnlockMutex(s_game_lock);
-  Notify(got == n ? "SLOT CARREGADO. FECHE E ABRA O APP."
-                  : "ERRO AO CARREGAR O SLOT");
+  if (ok) {
+    StopAudio();
+    StartAudio();
+  }
+  Notify(ok ? "SLOT CARREGADO" : "ERRO AO CARREGAR O SLOT");
 }
 
 static void SlotDelete(int k) {
